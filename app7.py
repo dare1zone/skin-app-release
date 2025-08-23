@@ -311,15 +311,17 @@ elif nav == "LIME explanation":
                 else:
                     _, probs = cam_model.predict(X, verbose=0)
                     return probs
-            segments = slic(base_arr, n_segments=180, compactness=12, sigma=1, start_label=1)
+            segments = slic(base_arr, n_segments=180, compactness=12, sigma=1, start_label=1, channel_axis=-1)
             explainer = lime_image.LimeImageExplainer()
-            exp = explainer.explain_instance(base_arr, classifier_fn=classifier_fn, top_labels=1, num_samples=800, hide_color=0, segmentation_fn=lambda x: segments)
             lab = CLASS_NAMES.index(label_to_explain)
+            exp = explainer.explain_instance(base_arr, classifier_fn=classifier_fn, labels=[lab], num_samples=800, hide_color=0, segmentation_fn=lambda x: segments)
             _, mask = exp.get_image_and_mask(lab, positive_only=True, num_features=int(num_feat), hide_rest=False)
             outlined = mark_boundaries(base_arr/255.0, mask, color=(1,1,0), mode="thick")
             st.image((outlined*255).astype(np.uint8), caption=f"LIME — {label_to_explain}", width=360, use_container_width=False)
-        except Exception as e:
+        except ImportError:
             st.error("Install extras: lime, scikit-image")
+        except Exception as e:
+            st.exception(e)
 elif nav == "Helpbot":
     st.subheader("Helpbot")
     c1,c2,c3 = st.columns(3)
