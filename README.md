@@ -60,3 +60,5 @@ docs/                  Screenshots, demo assets
 └── shot_ntd_cam.png
 └── shot_lime.png
 └── shot_helpbot.png
+
+[Watch the demo (MP4)](https://github.com/dare1zone/skin-app-release/releases/latest/download/demo.mp4)
