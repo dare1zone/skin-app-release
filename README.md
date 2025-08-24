@@ -34,3 +34,16 @@ streamlit run app7.py --server.port 8501
 
 ## Disclaimer
 Educational/triage support only; not a diagnosis.
+
+
+
+![General Score-CAM](docs/shot_general_cam.png)
+
+
+![NTD Grad-CAM](docs/shot_ntd_cam.png)
+
+
+![LIME](docs/shot_lime.png)
+
+
+![Helpbot](docs/shot_helpbot.png)
