@@ -47,3 +47,16 @@ Educational/triage support only; not a diagnosis.
 
 
 ![Helpbot](docs/shot_helpbot.png)
+## How to run
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app7.py
+
+## Repo structure
+app7.py                Streamlit app
+docs/                  Screenshots, demo assets
+└── shot_general_cam.png
+└── shot_ntd_cam.png
+└── shot_lime.png
+└── shot_helpbot.png
