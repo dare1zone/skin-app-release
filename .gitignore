@@ -1,0 +1,5 @@
+.venv/
+*.zip
+__pycache__/
+.DS_Store
+messages_outbox.jsonl
