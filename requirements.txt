@@ -1,0 +1,5 @@
+streamlit
+numpy
+pillow
+scikit-image
+lime
