@@ -62,3 +62,13 @@ docs/                  Screenshots, demo assets
 └── shot_helpbot.png
 
 [Watch the demo (MP4)](https://github.com/dare1zone/skin-app-release/releases/latest/download/demo.mp4)
+
+## Limitations & Safety
+- Educational support only; not a diagnosis.
+- NTD model will abstain on out-of-scope/normal skin or low-quality images.
+- Results depend on image quality and clinical context.
+
+## Environment tips (macOS Apple Silicon)
+- Use Python 3.11 in a venv.
+- If installs fail, ensure: `numpy==1.26.4`, `tensorflow-macos==2.16.1`.
+- For HEIC iPhone photos: `pip install pillow-heif`.
