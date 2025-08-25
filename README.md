@@ -72,3 +72,6 @@ docs/                  Screenshots, demo assets
 - Use Python 3.11 in a venv.
 - If installs fail, ensure: `numpy==1.26.4`, `tensorflow-macos==2.16.1`.
 - For HEIC iPhone photos: `pip install pillow-heif`.
+
+[![Latest Release](https://img.shields.io/github/v/release/dare1zone/skin-app-release)](https://github.com/dare1zone/skin-app-release/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
