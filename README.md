@@ -61,7 +61,7 @@ docs/                  Screenshots, demo assets
 └── shot_lime.png
 └── shot_helpbot.png
 
-[Watch the demo (MP4)](https://github.com/dare1zone/skin-app-release/releases/latest/download/demo.mp4)
+[Watch the demo (MP4)][https://github.com/dare1zone/skin-app-release/releases/latest/download/demo.mp4](https://github.com/dare1zone/skin-app-release/releases/download/v1.0.1/docs.demo.mp4.mov)
 
 ## Limitations & Safety
 - Educational support only; not a diagnosis.
