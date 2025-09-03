@@ -35,7 +35,7 @@ streamlit run app7.py --server.port 8501
 - ## Email setup 
 
 To enable **Message a doctor** email sending, set these environment variables before running the app.  
-> **Never commit real passwords or app passwords** to the repo—use your shell or a `.zshrc` that isn’t checked in.
+
 
 ```bash
 export SMTP_HOST="smtp.gmail.com"
