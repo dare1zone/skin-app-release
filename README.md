@@ -49,7 +49,7 @@ export SMTP_TO="dareb516@gmail.com"            # or a comma-separated list
 
 Python: use 3.11 .
 
-
+```bash
 # 1) Create & activate a Python 3.11 venv
 # macOS (Homebrew python@3.11):
 /opt/homebrew/bin/python3.11 -m venv .venv
