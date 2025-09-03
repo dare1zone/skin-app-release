@@ -32,12 +32,12 @@ streamlit run app7.py --server.port 8501
 - NumPy/TensorFlow mismatch: `pip install -r requirements.lock.txt`
 - 7-class CAM wrapper present: `ham10000_effnet7_cam/saved_model.pb`
 
-- ## Email setup 
+## Email setup 
 
 To enable **Message a doctor** email sending, set these environment variables before running the app.  
 
 
-```bash
+
 export SMTP_HOST="smtp.gmail.com"
 export SMTP_PORT="587"
 export SMTP_USER="dareb516@gmail.com"
@@ -49,7 +49,6 @@ export SMTP_TO="dareb516@gmail.com"            # or a comma-separated list
 
 Python: use 3.11 .
 
-```bash
 
 # 1) Create & activate a Python 3.11 venv
 # macOS (Homebrew python@3.11):
