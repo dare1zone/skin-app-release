@@ -13,12 +13,12 @@ Two educational image models wrapped in a Streamlit app:
 - docs/  (optional screenshots)
 
 ## Quick start
-```bash
+
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.lock.txt
 streamlit run app7.py --server.port 8501
-```
+
 
 ## How to use
 1. Pick the model (7-class or NTD).
