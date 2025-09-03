@@ -32,5 +32,19 @@ streamlit run app7.py --server.port 8501
 - NumPy/TensorFlow mismatch: `pip install -r requirements.lock.txt`
 - 7-class CAM wrapper present: `ham10000_effnet7_cam/saved_model.pb`
 
+- ## Email setup 
+
+To enable **Message a doctor** email sending, set these environment variables before running the app.  
+> **Never commit real passwords or app passwords** to the repo—use your shell or a `.zshrc` that isn’t checked in.
+
+```bash
+export SMTP_HOST="smtp.gmail.com"
+export SMTP_PORT="587"
+export SMTP_USER="dareb516@gmail.com"
+export SMTP_PASS="YOUR_16_CHAR_APP_PASSWORD"   # 16 chars from Google App Passwords
+export SMTP_FROM="Skin Lesion Assistant <dareb516@gmail.com>"
+export SMTP_TO="dareb516@gmail.com"            # or a comma-separated list
+
+
 ## Disclaimer
 Educational/triage support only; not a diagnosis.
