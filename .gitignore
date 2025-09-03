@@ -3,3 +3,7 @@
 __pycache__/
 .DS_Store
 messages_outbox.jsonl
+app7.backup*
+*.py.bak
+new_gradcam.pyfunc
+messages_outbox.jsonl

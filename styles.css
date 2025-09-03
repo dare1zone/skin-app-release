@@ -1,0 +1,56 @@
+:root{
+  --primary:#0ea5a4; --accent:#2563eb; --bg:#f6fbfd; --panel:#ffffff; --text:#102a43;
+  --muted:#6b7280; --ok:#10b981; --warn:#f59e0b; --err:#ef4444;
+}
+html, body, .stApp{ background: linear-gradient(160deg,#ffffff 0%,#f6fbfd 60%,#edf7f9 100%) !important; }
+.block-container{ max-width:1100px; padding-top:0.5rem; }
+
+/* Hero */
+.hero{
+  position:relative; overflow:hidden; border-radius:18px; padding:18px 18px;
+  background: radial-gradient(1000px 400px at -10% -10%, #e6fbff 0%, #f3fbfd 60%, #e9f5f7 100%);
+  border:1px solid #d7ecf1; box-shadow:0 8px 24px rgba(14,165,164,.08);
+}
+.hero:after{
+  content:""; position:absolute; right:-120px; top:-140px; width:420px; height:420px;
+  background: radial-gradient(60% 60% at 50% 50%, rgba(14,165,164,.10), rgba(14,165,164,0));
+  filter: blur(8px);
+}
+.logo{ font-size:28px; margin-right:12px }
+.hero-title{ font-weight:800; font-size:20px; color:var(--text) }
+.hero-sub{ color:#35506b; font-size:14px; margin-top:2px }
+
+/* Cards */
+.card{
+  margin:14px 0; padding:16px; border-radius:16px; background:var(--panel);
+  border:1px solid #e2eef2; box-shadow:0 6px 18px rgba(2,132,199,.06);
+}
+.card-h{ display:flex; align-items:baseline; gap:10px; margin-bottom:8px }
+.card-h .ct{ font-weight:700; font-size:16px; color:var(--text) }
+.card-h .cs{ font-size:13px; color:var(--muted) }
+
+/* Tabs and buttons */
+.stTabs [data-baseweb="tab"]{
+  background:#fff; border:1px solid #e2eef2; border-radius:12px; padding:8px 14px; margin-right:6px;
+}
+.stTabs [aria-selected="true"]{ background:#eaf8f7; border-color:var(--primary); color:#0a3d3b; }
+.stButton>button{ border-radius:10px; padding:.55rem 1rem; }
+.stButton>button[kind="primary"]{ background:var(--primary); }
+.stButton>button[kind="secondary"]{ color:var(--primary); border:1px solid var(--primary); background:#ffffff; }
+
+/* File uploader */
+[data-testid="stFileUploaderDropzone"]{
+  border:2px dashed rgba(14,165,164,.65); background:#ffffffcc; backdrop-filter:blur(6px);
+  border-radius:16px;
+}
+[data-testid="stFileUploader"] label{ color:#0a3d3b; font-weight:600 }
+
+/* Alerts and downloads */
+.stAlert{ border-radius:12px; }
+.stDownloadButton>button{ border-radius:10px; }
+
+/* Badges */
+.badge{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600 }
+.badge.ok{ background:#ecfdf5; color:#065f46; border:1px solid #a7f3d0 }
+.badge.warn{ background:#fffbeb; color:#92400e; border:1px solid #fde68a }
+.badge.inconclusive{ background:#f1f5f9; color:#0f172a; border:1px solid #e2e8f0 }
