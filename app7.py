@@ -2,12 +2,7 @@ import io, os, json, base64, numpy as np, streamlit as st, tensorflow as tf
 from PIL import Image, ImageOps
 import cv2
 
-try:
-    from pillow_heif import register_heif_opener
-    register_heif_opener()
-except Exception:
-    pass
-
+# ----------------- PAGE & THEME -----------------
 st.set_page_config(page_title="Skin Lesion Assistant — General + NTD", page_icon="🩺", layout="wide")
 st.markdown("""
 <style>
@@ -31,13 +26,14 @@ except Exception:
 
 IMG_SIZE = (224, 224)
 
+# ----------------- UTILS -----------------
 def load_json_list(path, fallback):
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             obj = json.load(f)
-            if isinstance(obj, dict): 
-                return list(obj.values())
-            return list(obj)
+        if isinstance(obj, dict):
+            return list(obj.values())
+        return list(obj)
     except Exception:
         return fallback
 
@@ -59,59 +55,63 @@ NTD_LABELS = load_json_list("ntd_labels.json", [
 
 def open_uploaded(up):
     b = up.getvalue()
+    # Try PIL
     try:
         return Image.open(io.BytesIO(b))
     except Exception:
         pass
-    try:
-        arr = np.frombuffer(b, dtype=np.uint8)
-        bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if bgr is None:
-            raise ValueError("decode_failed")
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        return Image.fromarray(rgb)
-    except Exception as e:
-        raise e
+    # Fallback to OpenCV
+    arr = np.frombuffer(b, dtype=np.uint8)
+    bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise ValueError("Could not decode the uploaded image.")
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(rgb)
 
+# ----------------- MODELS -----------------
 @st.cache_resource(show_spinner=False)
 def load_general_artifacts():
+    # EfficientNet TF SavedModel with CAM outputs
     from tensorflow.keras.applications.efficientnet import preprocess_input as pp
     layer = tf.keras.layers.TFSMLayer("ham10000_effnet7_cam", call_endpoint="serving_default")
-    inp = tf.keras.Input(shape=IMG_SIZE+(3,))
+    inp = tf.keras.Input(shape=IMG_SIZE + (3,))
     outs = layer(inp)
-    conv_t = next(v for v in outs.values() if len(v.shape)==4)
-    probs_t = next(v for v in outs.values() if len(v.shape)==2)
+    conv_t = next(v for v in outs.values() if len(v.shape) == 4)
+    probs_t = next(v for v in outs.values() if len(v.shape) == 2)
     cam_model = tf.keras.Model(inp, [conv_t, probs_t])
     return cam_model, GENERAL_LABELS, pp, "general"
 
 @st.cache_resource(show_spinner=False)
 def load_ntd_artifacts():
     from tensorflow.keras.applications.mobilenet_v2 import preprocess_input as pp
-    m = tf.keras.models.load_model("ntd_mbv2_mix_final.keras", compile=False)
-    conv = None
-    try:
-        conv = m.get_layer("out_relu").output
-    except Exception:
-        last = None
-        for l in m.layers[::-1]:
-            try:
-                shp = l.output_shape
-            except Exception:
-                continue
+    # Use the ROI-trained model file you have
+    m = tf.keras.models.load_model("ntd_mbv2_roi.keras", compile=False)
+    # Pick a higher-res conv layer for CAM (fallback to last 4D)
+    feat = None
+    for name in ["block_13_expand_relu", "block_6_expand_relu", "out_relu"]:
+        try:
+            feat = m.get_layer(name).output
+            break
+        except Exception:
+            pass
+    if feat is None:
+        for L in m.layers[::-1]:
+            shp = getattr(L, "output_shape", None)
             if isinstance(shp, tuple) and len(shp) == 4:
-                last = l
+                feat = L.output
                 break
-        if last is not None:
-            conv = last.output
-    grad_model = tf.keras.Model(inputs=m.input, outputs=[conv, m.output]) if conv is not None else None
+    if feat is None:
+        raise RuntimeError("No 4D conv layer found for CAM.")
+    grad_model = tf.keras.Model(inputs=m.input, outputs=[feat, m.output])
     return m, grad_model, NTD_LABELS, pp, "ntd"
 
+# ----------------- PRE/POST -----------------
 def tone_calibrate(arr_uint8, mode):
     if mode == "none":
         return arr_uint8
     lab = cv2.cvtColor(arr_uint8, cv2.COLOR_RGB2LAB)
     L, A, B = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     L2 = clahe.apply(L)
     if mode == "darker":
         L2 = np.clip(L2 * 0.85, 0, 255).astype(np.uint8)
@@ -131,17 +131,64 @@ def preprocess_pil(pil_im, tone_mode, preprocess_fn):
     return np.array(im224), x
 
 def gradcam_uint8(img_tensor, grad_model, class_index, out_size):
+    import os, cv2, numpy as np, tensorflow as tf
+
+    # Grad-CAM
     with tf.GradientTape() as tape:
         conv_out, preds = grad_model(img_tensor)
-        loss = preds[:, int(class_index)]
-    grads = tape.gradient(loss, conv_out)
-    w = tf.reduce_mean(grads, axis=(1,2), keepdims=True)
+        target = preds[:, int(class_index)]
+    grads = tape.gradient(target, conv_out)
+    w = tf.reduce_mean(grads, axis=(1, 2), keepdims=True)
     cam = tf.reduce_sum(w * conv_out, axis=-1)
     cam = tf.nn.relu(cam)[0].numpy()
-    cam = (cam - cam.min()) / (cam.max() + 1e-6)
+
+    # Normalize and resize to display scale
+    cam -= cam.min()
+    cam /= (cam.max() + 1e-6)
     cam = cv2.resize(cam, out_size[::-1], interpolation=cv2.INTER_CUBIC)
-    heat = (255*cam).astype("uint8")
-    return cv2.applyColorMap(heat, cv2.COLORMAP_JET)
+
+    # Tunables from environment
+    focus_pct = float(os.environ.get("NTD_CAM_FOCUS", "82"))
+    focus_pct = max(50.0, min(99.0, focus_pct))
+    blur_sigma = float(os.environ.get("NTD_CAM_BLUR", "0.9"))
+    dilate_px = int(os.environ.get("NTD_CAM_DILATE", "1"))
+
+    # Smooth a little (helps merge tiny islands)
+    if blur_sigma > 0:
+        cam = cv2.GaussianBlur(cam, (0, 0), blur_sigma)
+
+    # Keep only top-K% activations
+    t = np.percentile(cam, focus_pct)
+    cam2 = np.where(cam >= t, cam, 0.0).astype(np.float32)
+
+    # Build ROI mask from the (scaled) CAM with Otsu + morphology
+    heat_u8 = (cam2 * 255.0).astype("uint8")
+    _, binmap = cv2.threshold(heat_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    binmap = (binmap > 0).astype(np.uint8)
+    k3 = np.ones((3, 3), np.uint8)
+    k5 = np.ones((5, 5), np.uint8)
+    binmap = cv2.morphologyEx(binmap, cv2.MORPH_OPEN, k3, iterations=1)
+    binmap = cv2.morphologyEx(binmap, cv2.MORPH_CLOSE, k5, iterations=1)
+    if dilate_px > 0:
+        kd = np.ones((dilate_px*2+1, dilate_px*2+1), np.uint8)
+        binmap = cv2.dilate(binmap, kd, iterations=1)
+
+    # Keep largest connected component
+    num_labels, labels = cv2.connectedComponents(binmap, connectivity=8)
+    if num_labels > 1:
+        areas = np.bincount(labels.ravel())
+        areas[0] = 0
+        keep = int(areas.argmax())
+        binmap = (labels == keep).astype(np.uint8)
+
+    # Mask and renormalize
+    cam2 = cam2 * binmap
+    mmin, mmax = cam2.min(), cam2.max()
+    cam2 = (cam2 - mmin) / (mmax - mmin + 1e-6) if mmax > mmin else np.zeros_like(cam2, dtype=np.float32)
+
+    return cv2.applyColorMap((cam2 * 255.0).astype("uint8"), cv2.COLORMAP_JET)
+
+
 
 def scorecam_uint8(x_pre, cam_model, class_index, out_size, k=16):
     conv, probs = cam_model.predict(x_pre, verbose=0)
@@ -161,7 +208,7 @@ def scorecam_uint8(x_pre, cam_model, class_index, out_size, k=16):
         heat += float(p2[0, idx]) * mask
     heat -= heat.min()
     heat /= (heat.max() + 1e-6)
-    heat = (255*heat).astype("uint8")
+    heat = (255 * heat).astype("uint8")
     return cv2.applyColorMap(heat, cv2.COLORMAP_JET)
 
 def overlay_heat(rgb_uint8, heat_uint8, alpha):
@@ -194,11 +241,13 @@ def conf_stability(pvec):
 def top_table(labels, pvec, k=5):
     order = np.argsort(pvec)[::-1][:min(k, len(labels))]
     names = [labels[i] for i in order]
-    vals = [round(float(pvec[i])*100.0, 1) for i in order]
+    vals = [round(float(pvec[i]) * 100.0, 1) for i in order]
     return names, vals
 
+# ----------------- UI -----------------
 st.title("Skin Lesion Assistant")
 st.caption("General dermatology (7 classes) and Neglected Tropical Diseases (3 classes). Educational tool, not a medical diagnosis.")
+
 model_choice = st.selectbox("Model", ["General — 7 classes", "NTD — 3 classes"], index=1, key="model_select")
 
 if model_choice.startswith("General"):
@@ -211,39 +260,61 @@ else:
 
 nav = st.radio("Sections", ["Upload & Predict","Grad-CAM","LIME explanation","Helpbot","Find care","Message a doctor"], horizontal=True, key="nav_top")
 
+# ----------------- Upload & Predict -----------------
 if nav == "Upload & Predict":
-    colL, colR = st.columns([1,1])
+    colL, colR = st.columns([1, 1])
     with colL:
         st.subheader("Upload a dermatoscopic image")
         up = st.file_uploader("Choose image", type=["jpg","jpeg","png","heic","heif"], key="up_main")
         tone = st.selectbox("Skin tone calibration", ["none","darker","brighter"], index=0, key="tone_main")
         alpha = st.slider("CAM overlay strength", 0.0, 1.0, 0.35, 0.01, key="alpha_main")
     with colR:
-        st.markdown("<div class='card'><b>How to read the result</b><ul><li>The model predicts a class and confidence.</li><li>Grad-CAM/Score-CAM highlights what influenced the prediction.</li><li>The table shows top alternatives.</li><li>Educational guidance only.</li></ul></div>", unsafe_allow_html=True)
+        st.markdown("<div class='card'><b>How to read the result</b><ul><li>The model predicts a class and confidence.</li><li>CAM highlights influential regions.</li><li>The table shows top alternatives.</li><li>Educational guidance only.</li></ul></div>", unsafe_allow_html=True)
+
     if up is not None:
         rgb224, x = preprocess_pil(open_uploaded(up), tone, preprocess_fn)
+
         if mode_key == "ntd":
+            # --- Background gate (avoid plain skin) ---
+            g = cv2.cvtColor(rgb224, cv2.COLOR_RGB2GRAY)
+            lap_var = float(cv2.Laplacian(g, cv2.CV_64F).var())
+            edge_ratio = float((cv2.Canny(g, 30, 90) > 0).mean())
+            if lap_var < 35.0 and edge_ratio < 0.020:
+                st.info("Inconclusive for NTD (likely normal skin / background). Try a closer, sharp dermatoscopic image.")
+                st.stop()
+
+            # --- Predict ---
             p = model.predict(x, verbose=0)[0]
+            order_tmp = np.argsort(p)[::-1]
+            conf = float(p[order_tmp[0]])
+            margin = float(conf - (p[order_tmp[1]] if len(p) > 1 else 0.0))
+
+            # --- Decision gate (your request: conf >= 0.50, margin >= 0.12) ---
+            if conf < 0.50 or margin < 0.12:
+                st.info(f"Inconclusive (decision gate) · conf={conf:.2f} thr>=0.50 · margin={margin:.2f} thr>=0.12. Try a closer, sharp dermatoscopic image.")
+                st.stop()
+
+            # --- Display ---
             conf_html, stab_html, order = conf_stability(p)
             pred_idx = int(order[0])
             heat = gradcam_uint8(x, grad_model, pred_idx, IMG_SIZE)
             blend = overlay_heat(rgb224, heat, alpha)
             st.markdown(conf_html + " " + stab_html, unsafe_allow_html=True)
-            c1, c2 = st.columns([1,1])
+
+            c1, c2 = st.columns([1, 1])
             with c1:
                 st.image(rgb224, caption="Input (224×224)", width=320, use_container_width=False)
             with c2:
                 st.image(blend, caption=f"Grad-CAM — {CLASS_NAMES[pred_idx]}", width=320, use_container_width=False)
                 buf = io.BytesIO()
                 Image.fromarray(blend).save(buf, format="PNG")
-                fname = "gradcam_" + CLASS_NAMES[pred_idx].replace(" ", "_") + ".png"
-                st.download_button("Download CAM", data=buf.getvalue(), file_name=fname, mime="image/png", key="dl_cam_ntd")
+                st.download_button("Download CAM (PNG)", data=buf.getvalue(), file_name=f"gradcam_{CLASS_NAMES[pred_idx].replace(' ','_')}.png", mime="image/png", key="dl_cam_ntd")
+
             names, vals = top_table(CLASS_NAMES, p, k=len(CLASS_NAMES))
             st.dataframe({"Class": names, "Confidence %": vals}, hide_index=True, use_container_width=True)
-            buf = io.BytesIO()
-            Image.fromarray(blend).save(buf, format="PNG"); buf.seek(0)
-            st.download_button("Download CAM (PNG)", data=buf, file_name="ntd_gradcam.png", mime="image/png")
+
         else:
+            # General model: Score-CAM
             conv, probs = cam_model.predict(x, verbose=0)
             p = probs[0]
             conf_html, stab_html, order = conf_stability(p)
@@ -251,80 +322,92 @@ if nav == "Upload & Predict":
             heat = scorecam_uint8(x, cam_model, pred_idx, IMG_SIZE, k=16)
             blend = overlay_heat(rgb224, heat, alpha)
             st.markdown(conf_html + " " + stab_html, unsafe_allow_html=True)
-            c1, c2 = st.columns([1,1])
+
+            c1, c2 = st.columns([1, 1])
             with c1:
                 st.image(rgb224, caption="Input (224×224)", width=320, use_container_width=False)
             with c2:
                 st.image(blend, caption=f"Score-CAM — {CLASS_NAMES[pred_idx]}", width=320, use_container_width=False)
                 buf = io.BytesIO()
                 Image.fromarray(blend).save(buf, format="PNG")
-                fname = "scorecam_" + CLASS_NAMES[pred_idx].replace(" ", "_") + ".png"
-                st.download_button("Download CAM", data=buf.getvalue(), file_name=fname, mime="image/png", key="dl_cam_general")
+                st.download_button("Download CAM (PNG)", data=buf.getvalue(), file_name=f"scorecam_{CLASS_NAMES[pred_idx].replace(' ','_')}.png", mime="image/png", key="dl_cam_general")
+
             names, vals = top_table(CLASS_NAMES, p, k=len(CLASS_NAMES))
             st.dataframe({"Class": names, "Confidence %": vals}, hide_index=True, use_container_width=True)
-            buf = io.BytesIO()
-            Image.fromarray(blend).save(buf, format="PNG"); buf.seek(0)
-            st.download_button("Download CAM (PNG)", data=buf, file_name="general_scorecam.png", mime="image/png")
 
+# ----------------- Grad-CAM viewer -----------------
 elif nav == "Grad-CAM":
     st.subheader("Grad-CAM / Score-CAM viewer")
     up = st.file_uploader("Upload image", type=["jpg","jpeg","png","heic","heif"], key="up_cam")
     tone = st.selectbox("Skin tone calibration", ["none","darker","brighter"], index=0, key="tone_cam")
     alpha = st.slider("Overlay strength", 0.0, 1.0, 0.35, 0.01, key="alpha_cam")
     target = st.selectbox("Class to visualize", CLASS_NAMES, key="cam_target")
+
     if up is not None:
         rgb224, x = preprocess_pil(open_uploaded(up), tone, preprocess_fn)
         t_idx = CLASS_NAMES.index(target)
         if mode_key == "ntd":
             heat = gradcam_uint8(x, grad_model, t_idx, IMG_SIZE)
-            blend = overlay_heat(rgb224, heat, alpha)
-            st.image(blend, caption=f"Grad-CAM — {target}", width=360, use_container_width=False)
         else:
             heat = scorecam_uint8(x, cam_model, t_idx, IMG_SIZE, k=16)
-            blend = overlay_heat(rgb224, heat, alpha)
-            st.image(blend, caption=f"Score-CAM — {target}", width=360, use_container_width=False)
+        blend = overlay_heat(rgb224, heat, alpha)
+        st.image(blend, caption=f"CAM — {target}", width=360, use_container_width=False)
         buf = io.BytesIO()
-        Image.fromarray(blend).save(buf, format="PNG"); buf.seek(0)
-        st.download_button("Download CAM (PNG)", data=buf, file_name="cam.png", mime="image/png")
+        Image.fromarray(blend).save(buf, format="PNG")
+        st.download_button("Download CAM (PNG)", data=buf.getvalue(), file_name="cam.png", mime="image/png")
 
+# ----------------- LIME -----------------
 elif nav == "LIME explanation":
     st.subheader("LIME explanation")
     up = st.file_uploader("Upload image", type=["jpg","jpeg","png","heic","heif"], key="up_lime")
     tone = st.selectbox("Skin tone calibration", ["none","darker","brighter"], index=0, key="tone_lime")
     label_to_explain = st.selectbox("Class to explain", CLASS_NAMES, key="lime_target")
     num_feat = st.slider("Number of regions", 4, 20, 8, 1, key="lime_num")
+
     if up is not None:
         try:
             from lime import lime_image
             from skimage.segmentation import slic, mark_boundaries
-            base, x = preprocess_pil(open_uploaded(up), tone, preprocess_fn)
+
+            base, _ = preprocess_pil(open_uploaded(up), tone, lambda x: x)  # no model preprocess for base_arr
             base_arr = base.astype(np.uint8)
+
             def classifier_fn(imgs):
                 arrs = []
                 for a in imgs:
-                    a_uint8 = (a*255 if a.max()<=1.0 else a).astype(np.uint8)
+                    a_uint8 = (a * 255 if a.max() <= 1.0 else a).astype(np.uint8)
                     arrs.append(np.array(Image.fromarray(a_uint8).resize(IMG_SIZE)))
                 X = np.stack(arrs, 0).astype("float32")
-                X = preprocess_fn(X)
+
+                # Use the correct preprocess and model per mode
+                Xp = preprocess_fn(X)
                 if mode_key == "ntd":
-                    return model.predict(X, verbose=0)
+                    return model.predict(Xp, verbose=0)
                 else:
-                    _, probs = cam_model.predict(X, verbose=0)
+                    _, probs = cam_model.predict(Xp, verbose=0)
                     return probs
-            segments = slic(base_arr, n_segments=180, compactness=12, sigma=1, start_label=1, channel_axis=-1)
+
+            segments = slic(base_arr, n_segments=180, compactness=12, sigma=1, start_label=1)
             explainer = lime_image.LimeImageExplainer()
-            lab = CLASS_NAMES.index(label_to_explain)
-            exp = explainer.explain_instance(base_arr, classifier_fn=classifier_fn, labels=[lab], num_samples=800, hide_color=0, segmentation_fn=lambda x: segments)
-            _, mask = exp.get_image_and_mask(lab, positive_only=True, num_features=int(num_feat), hide_rest=False)
-            outlined = mark_boundaries(base_arr/255.0, mask, color=(1,1,0), mode="thick")
-            st.image((outlined*255).astype(np.uint8), caption=f"LIME — {label_to_explain}", width=360, use_container_width=False)
-        except ImportError:
-            st.error("Install extras: lime, scikit-image")
+            idx = CLASS_NAMES.index(label_to_explain)
+            exp = explainer.explain_instance(
+                base_arr,
+                classifier_fn=classifier_fn,
+                top_labels=1,
+                num_samples=800,
+                hide_color=0,
+                segmentation_fn=lambda x: segments,
+            )
+            _, mask = exp.get_image_and_mask(idx, positive_only=True, num_features=int(num_feat), hide_rest=False)
+            outlined = mark_boundaries(base_arr / 255.0, mask, color=(1, 1, 0), mode="thick")
+            st.image((outlined * 255).astype(np.uint8), caption=f"LIME - {label_to_explain}", width=360, use_container_width=False)
         except Exception as e:
-            st.exception(e)
+            st.error(f"Install extras: lime, scikit-image ({e})")
+
+# ----------------- Helpbot -----------------
 elif nav == "Helpbot":
     st.subheader("Helpbot")
-    c1,c2,c3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown("<div class='card'><h3>🚩 When to seek care</h3><ul><li><b>Urgent:</b> rapid growth, bleeding, very dark/irregular</li><li><b>Soon:</b> changing spot, new symptoms, or you are worried</li><li><b>Routine:</b> stable and harmless-appearing</li></ul></div>", unsafe_allow_html=True)
     with c2:
@@ -342,12 +425,14 @@ elif nav == "Helpbot":
         st.write("Accuracy varies by class and image quality. Confidence and stability badges summarize how decisive a prediction was.")
     else:
         st.write("If you are worried about a lesion that is changing, bleeding, painful, or rapidly growing, arrange an in-person evaluation soon. If severe or urgent, seek emergency care.")
+
+# ----------------- Find care -----------------
 elif nav == "Find care":
     st.subheader("Find care")
     st.caption("Search nearby services. External map links will open in a new tab.")
 
     with st.form("findcare"):
-        col1, col2 = st.columns([2,1])
+        col1, col2 = st.columns([2, 1])
         with col1:
             city = st.text_input("City or region", key="care_city")
             specialty = st.selectbox(
@@ -357,8 +442,8 @@ elif nav == "Find care":
             )
         with col2:
             open_now = st.checkbox("Open now", value=False, key="care_open")
-            walk_in  = st.checkbox("Walk-in",  value=False, key="care_walkin")
-            pediatric= st.checkbox("Pediatric", value=False, key="care_ped")
+            walk_in = st.checkbox("Walk-in", value=False, key="care_walkin")
+            pediatric = st.checkbox("Pediatric", value=False, key="care_ped")
         submit = st.form_submit_button("Build search links")
 
     if submit:
@@ -370,15 +455,11 @@ elif nav == "Find care":
         if filters:
             q = q + " " + " ".join(filters)
 
-        loc = city.strip()
+        loc = (city or "").strip()
         if not loc:
             loc = "near me"
 
-        if loc == "near me":
-            base_q = q + " " + loc
-        else:
-            base_q = q + " near " + loc
-
+        base_q = (q + " " + loc) if loc == "near me" else (q + " near " + loc)
         gq = base_q.replace(" ", "+")
         gmaps_url = f"https://www.google.com/maps/search/{gq}"
         st.markdown(f"<div class='card'><b>Google Maps</b><br><a href='{gmaps_url}' target='_blank'>Open search</a></div>", unsafe_allow_html=True)
@@ -389,6 +470,7 @@ elif nav == "Find care":
 
     st.markdown("<div class='card small'><b>Tips:</b> Try adding a neighborhood or hospital name to narrow results. Call ahead to confirm availability.</div>", unsafe_allow_html=True)
 
+# ----------------- Message a doctor -----------------
 elif nav == "Message a doctor":
     st.subheader("Message a doctor")
     st.caption("Not for emergencies. If severe symptoms or rapid changes, seek urgent care.")
@@ -396,7 +478,7 @@ elif nav == "Message a doctor":
         c1, c2 = st.columns(2)
         with c1:
             name = st.text_input("Name", key="msg_name")
-            contact = st.text_input("Email or phone", key="msg_contact")
+            contact = st.text_input("Email(s) to send to (comma or space separated). Leave blank to send to clinic.", key="msg_contact")
             city = st.text_input("City / Region", key="msg_city")
         with c2:
             subj = st.text_input("Subject", key="msg_subj")
@@ -405,10 +487,14 @@ elif nav == "Message a doctor":
         ok = st.checkbox("I consent to be contacted about this message.", key="msg_ok")
         sent = st.form_submit_button("Send message")
         if sent:
-            if not ok or not contact.strip():
-                st.error("Please provide contact info and consent.")
+            if not ok:
+                st.error("Please provide consent.")
             else:
-                import time
+                import time, smtplib, ssl
+                from email.message import EmailMessage
+                from email.utils import getaddresses
+
+                # Build record
                 rec = {"ts": int(time.time()), "name": name, "contact": contact, "city": city, "subject": subj, "message": msg}
                 if up2 is not None:
                     try:
@@ -417,18 +503,73 @@ elif nav == "Message a doctor":
                         rec["image_b64"] = base64.b64encode(up2.getvalue()).decode("ascii")
                     except Exception:
                         pass
+
+                # Always log locally
                 try:
-                    with open("messages_outbox.jsonl","a",encoding="utf-8") as f:
+                    with open("messages_outbox.jsonl", "a", encoding="utf-8") as f:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     st.success("Saved locally to messages_outbox.jsonl")
                 except Exception as e:
                     st.warning(f"Could not write messages_outbox.jsonl: {e}")
-                draft = f"""To: {contact}
-Subject: {subj or 'Skin concern'}
 
-Dear {name or 'Patient'},
+                # SMTP env
+                smtp_host = os.environ.get("SMTP_HOST")
+                smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+                smtp_user = os.environ.get("SMTP_USER")
+                smtp_pass = os.environ.get("SMTP_PASS")
+                smtp_from = os.environ.get("SMTP_FROM") or smtp_user
+                smtp_to_default = os.environ.get("SMTP_TO") or smtp_user
 
-Thank you for your message. A clinician will review your note from {city or 'your location'} and reply as soon as possible.
+                def extract_emails(text):
+                    if not text:
+                        return []
+                    # Accept comma/semicolon/space separated
+                    raw = text.replace(";", ",").replace("\n", " ")
+                    emails = [e for _, e in getaddresses([raw])]
+                    emails = [x for x in emails if "@" in x]
+                    return emails
 
-- Clinic"""
-                st.code(draft, language="text")
+                to_list = extract_emails(contact)
+                if not to_list:
+                    to_list = [smtp_to_default] if smtp_to_default else []
+
+                # Send only if SMTP env is configured
+                if smtp_host and smtp_user and smtp_pass and smtp_from and to_list:
+                    try:
+                        email = EmailMessage()
+                        email["From"] = smtp_from
+                        email["To"] = ", ".join(to_list)
+                        email["Subject"] = subj or "Skin concern"
+                        body = (
+                            f"Dear {name or 'Patient'},\n\n"
+                            "Thank you for your message.\n\n"
+                            f"City/Region: {city or '—'}\n"
+                            f"Contact: {contact or '—'}\n\n"
+                            f"Subject: {subj or 'Skin concern'}\n\n"
+                            "Message:\n"
+                            f"{msg or '—'}\n\n"
+                            "- Skin Lesion Assistant"
+                        )
+                        email.set_content(body)
+
+                        # Attach image if present
+                        if up2 is not None:
+                            try:
+                                data = up2.getvalue()
+                                maintype, subtype = (up2.type or "application/octet-stream").split("/", 1)
+                                email.add_attachment(data, maintype=maintype, subtype=subtype, filename=up2.name)
+                            except Exception:
+                                pass
+
+                        ctx = ssl.create_default_context()
+                        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as s:
+                            s.ehlo()
+                            s.starttls(context=ctx)
+                            s.ehlo()
+                            s.login(smtp_user, smtp_pass)
+                            s.send_message(email)
+                        st.success(f"Email sent to: {', '.join(to_list)}")
+                    except Exception as e:
+                        st.warning(f"Email not sent ({e}). Set SMTP_* env vars to enable.")
+                else:
+                    st.info("Email not sent (SMTP not configured). Set SMTP_* env vars to enable.")
